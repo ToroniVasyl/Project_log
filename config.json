@@ -1,0 +1,4 @@
+{
+  "log_file": "logs/app.log",
+  "contamination": 0.1
+}
