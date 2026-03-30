@@ -12,8 +12,16 @@ import os
 
 logger = setup_logger()
 
-with open("config.json", "r") as f:
-    config = json.load(f)
+# ===== SAFE CONFIG LOADING =====
+try:
+    with open("config.json", "r") as f:
+        config = json.load(f)
+except FileNotFoundError:
+    messagebox.showerror("Error", "config.json not found")
+    config = {"contamination": 0.1}  # default fallback
+except json.JSONDecodeError:
+    messagebox.showerror("Error", "Invalid config.json format")
+    config = {"contamination": 0.1}
 
 
 class App:
@@ -32,14 +40,8 @@ class App:
         self.create_widgets()
 
     def configure_styles(self):
-        # Buttons style (світліші + “rounded effect” через padding)
-        self.style.configure(
-            "TButton",
-            font=("Segoe UI", 10),
-            padding=8
-        )
+        self.style.configure("TButton", font=("Segoe UI", 10), padding=8)
 
-        # Treeview style
         self.style.configure(
             "Treeview",
             background="white",
@@ -55,7 +57,6 @@ class App:
         )
 
     def create_widgets(self):
-        # ===== TOP FRAME =====
         top_frame = tk.Frame(self.root, bg="#f4f6f8")
         top_frame.pack(pady=15)
 
@@ -68,52 +69,22 @@ class App:
         )
         self.file_label.pack(pady=5)
 
-        # Buttons
         btn_frame = tk.Frame(top_frame, bg="#f4f6f8")
         btn_frame.pack(pady=10)
 
-        tk.Button(
-            btn_frame,
-            text="Load Log File",
-            command=self.load_file,
-            bg="#4CAF50",
-            fg="white",
-            activebackground="#45a049",
-            padx=12,
-            pady=6,
-            relief="flat"
-        ).grid(row=0, column=0, padx=5)
+        tk.Button(btn_frame, text="Load Log File",
+                  command=self.load_file, bg="#4CAF50", fg="white").grid(row=0, column=0, padx=5)
 
-        tk.Button(
-            btn_frame,
-            text="Analyze",
-            command=self.analyze,
-            bg="#2196F3",
-            fg="white",
-            activebackground="#1976D2",
-            padx=12,
-            pady=6,
-            relief="flat"
-        ).grid(row=0, column=1, padx=5)
+        tk.Button(btn_frame, text="Analyze",
+                  command=self.analyze, bg="#2196F3", fg="white").grid(row=0, column=1, padx=5)
 
-        tk.Button(
-            btn_frame,
-            text="Exit",
-            command=self.root.quit,
-            bg="#f44336",
-            fg="white",
-            activebackground="#d32f2f",
-            padx=12,
-            pady=6,
-            relief="flat"
-        ).grid(row=0, column=2, padx=5)
+        tk.Button(btn_frame, text="Exit",
+                  command=self.root.quit, bg="#f44336", fg="white").grid(row=0, column=2, padx=5)
 
-        # ===== TABLE =====
         table_frame = tk.Frame(self.root, bg="#f4f6f8")
         table_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
         columns = ("time", "level", "value", "anomaly")
-
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings")
 
         for col in columns:
@@ -126,23 +97,19 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # ===== STATUS BAR =====
-        self.status = tk.Label(
-            self.root,
-            text="Ready",
-            bg="#eaeaea",
-            fg="#333",
-            anchor="w"
-        )
+        self.status = tk.Label(self.root, text="Ready", bg="#eaeaea", anchor="w")
         self.status.pack(fill="x", side="bottom")
 
     def load_file(self):
         self.file_path = filedialog.askopenfilename()
 
-        if self.file_path:
-            self.file_label.config(text=os.path.basename(self.file_path))
-            self.status.config(text="File loaded")
-            logger.info(f"Loaded file: {self.file_path}")
+        if not self.file_path:
+            messagebox.showwarning("Warning", "File not selected")
+            return
+
+        self.file_label.config(text=os.path.basename(self.file_path))
+        self.status.config(text="File loaded")
+        logger.info(f"Loaded file: {self.file_path}")
 
     def analyze(self):
         if not self.file_path:
@@ -151,7 +118,13 @@ class App:
 
         try:
             df = parse_log(self.file_path)
-            df = detect_anomalies(df, config["contamination"])
+
+            # перевірка на пусті дані
+            if df is None or df.empty:
+                messagebox.showerror("Error", "Log file is empty or invalid")
+                return
+
+            df = detect_anomalies(df, config.get("contamination", 0.1))
 
             save_report(df)
 
@@ -161,9 +134,13 @@ class App:
             self.status.config(text="Analysis completed")
             logger.info("Analysis completed")
 
+        except FileNotFoundError:
+            messagebox.showerror("Error", "File not found")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid data: {e}")
         except Exception as e:
             logger.error(str(e))
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Error", "Unexpected error occurred")
 
     def show_table(self, df):
         for row in self.tree.get_children():
@@ -171,14 +148,15 @@ class App:
 
         for _, row in df.iterrows():
             self.tree.insert("", "end", values=(
-                row["time"],
-                row["level"],
-                row["value"],
-                "YES" if row["anomaly"] == 1 else "NO"
+                row.get("time", ""),
+                row.get("level", ""),
+                row.get("value", ""),
+                "YES" if row.get("anomaly", 0) == 1 else "NO"
             ))
 
     def show_graph(self, df):
-        plt.style.use("seaborn-v0_8")
+        if df is None or df.empty:
+            return
 
         plt.figure(figsize=(8, 4))
 
@@ -194,7 +172,7 @@ class App:
             label="Anomalies"
         )
 
-        plt.title("Log Anomaly Detection", fontsize=14)
+        plt.title("Log Anomaly Detection")
         plt.xlabel("Index")
         plt.ylabel("Value")
 
